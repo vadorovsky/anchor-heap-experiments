@@ -9,9 +9,12 @@ use light_macros::pubkey;
 declare_id!("EKfe7NDwaeh6Z8uFRXWTM7B1dsUbjQUxvocmCwBdcNK2");
 
 pub const HEIGHT: usize = 26;
-pub const NR_LEAVES: usize = 10;
-// more than 10 doesn't fit in the noop instruction
-// pub const NR_LEAVES: usize = 9;
+/// Number of changelog event batches we emit in one transaction.
+pub const BATCHES: usize = 3;
+/// Number of leaves per event batch.
+pub const NR_LEAVES_BATCH: usize = 10;
+// more than 10 doesn't fit in the noop instruction, so
+// pub const NR_LEAVES_BATCH: usize = 11;
 
 pub const NOOP_PROGRAM_ID: Pubkey = pubkey!("noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV");
 
@@ -22,50 +25,65 @@ pub mod with_account {
     pub fn append_leaves(ctx: Context<AppendLeaves>) -> Result<()> {
         let mut buffers = ctx.accounts.buffers.load_init()?;
 
-        let mut changelogs = Vec::new();
+        for i in 0..BATCHES {
+            let mut changelogs = Vec::new();
 
-        for i in 0..NR_LEAVES {
-            // For keeping the implementation ez, we keep one path per event so
-            // far.
-            let path = unsafe {
+            for j in 0..NR_LEAVES_BATCH {
+                // For keeping the implementation ez, we keep one path per event so
+                // far.
+                let path = unsafe {
+                    Vec::from_raw_parts(
+                        buffers.paths_buffer[j].as_mut_ptr() as *mut PathNode,
+                        HEIGHT,
+                        HEIGHT,
+                    )
+                };
+                let paths = vec![path];
+
+                let changelog_event = ChangelogEventV1 {
+                    id: [5u8; 32],
+                    seq: j as u64,
+                    index: j as u32,
+                    paths,
+                };
+                changelogs.push(ChangelogEvent::V1(changelog_event));
+
+                msg!("batch {}: leaf {}: pushed changelog", i, j);
+            }
+
+            let changelogs = Changelogs { changelogs };
+
+            msg!("batch {}: about to serialize batch", i);
+            changelogs.serialize(&mut buffers.serialization_buffer.as_mut_slice())?;
+            let event = unsafe {
                 Vec::from_raw_parts(
-                    buffers.paths_buffer[i].as_mut_ptr() as *mut PathNode,
-                    HEIGHT,
-                    HEIGHT,
+                    buffers.serialization_buffer.as_mut_ptr(),
+                    buffers.serialization_buffer.len(),
+                    buffers.serialization_buffer.len(),
                 )
             };
-            let paths = vec![path];
+            msg!("batch {}: serialized", i);
 
-            let changelog_event = ChangelogEventV1 {
-                id: [5u8; 32],
-                seq: i as u64,
-                index: i as u32,
-                paths,
-            };
-            changelogs.push(ChangelogEvent::V1(changelog_event));
+            msg!(
+                "batch {}: serialization buffer len: {}",
+                i,
+                buffers.serialization_buffer.len()
+            );
 
-            msg!("pushed leaf {}", i);
+            emit_indexer_event(event, &ctx.accounts.log_wrapper, &ctx.accounts.user)?;
+
+            msg!("batch {}: emitted event", i);
+
+            // Clean up buffers.
+            for j in 0..buffers.paths_buffer.len() {
+                for k in 0..buffers.paths_buffer[j].len() {
+                    buffers.paths_buffer[j][k] = 0;
+                }
+            }
+            for j in 0..buffers.serialization_buffer.len() {
+                buffers.serialization_buffer[j] = 0;
+            }
         }
-
-        let changelogs = Changelogs { changelogs };
-
-        msg!("about to serialize");
-        changelogs.serialize(&mut buffers.serialization_buffer.as_mut_slice())?;
-        let event = unsafe {
-            Vec::from_raw_parts(
-                buffers.serialization_buffer.as_mut_ptr(),
-                buffers.serialization_buffer.len(),
-                buffers.serialization_buffer.len(),
-            )
-        };
-        msg!("serialized");
-
-        msg!(
-            "serialization buffer len: {}",
-            buffers.serialization_buffer.len()
-        );
-
-        emit_indexer_event(event, &ctx.accounts.log_wrapper, &ctx.accounts.user)?;
 
         Ok(())
     }
@@ -80,15 +98,18 @@ pub fn emit_indexer_event<'info>(
     if noop_program.key() != NOOP_PROGRAM_ID {
         return err!(MyErrorCode::InvalidNoopPubkey);
     }
+    msg!("checked noop");
     let instruction = Instruction {
         program_id: noop_program.key(),
         accounts: vec![],
         data,
     };
+    msg!("instantiated instruction");
     invoke(
         &instruction,
         &[noop_program.to_account_info(), signer.to_account_info()],
     )?;
+    msg!("invoked noop program");
 
     Ok(())
 }
@@ -104,7 +125,7 @@ pub struct Buffers {
     /// Buffer used by rkyv for changelog paths.
     // pub paths_buffer: [u8; (mem::size_of::<PathNode>() * HEIGHT * NR_LEAVES)
     //     + mem::size_of::<ChangelogEventV1>() * NR_LEAVES * mem::size_of::<Changelogs>()],
-    pub paths_buffer: [[u8; mem::size_of::<PathNode>() * HEIGHT]; NR_LEAVES],
+    pub paths_buffer: [[u8; mem::size_of::<PathNode>() * HEIGHT]; NR_LEAVES_BATCH],
     /// Buffer used by borsh to serialize the final event.
     // pub serialization_buffer: [u8; (mem::size_of::<PathNode>() * HEIGHT * NR_LEAVES)
     //     + mem::size_of::<ChangelogEventV1>() * NR_LEAVES * mem::size_of::<Changelogs>()],
