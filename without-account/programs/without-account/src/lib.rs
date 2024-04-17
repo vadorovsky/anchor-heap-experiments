@@ -7,8 +7,9 @@ use light_macros::pubkey;
 declare_id!("EnusnErAr7SfFWTJvUXMNdXcXaXkWnpN6p217YZ5T8ou");
 
 pub const HEIGHT: usize = 26;
-pub const NR_LEAVES: usize = 2;
-// pub const LEAVES: [[u8; 32]; 2] = [[3u8; 32]; 2];
+pub const NR_LEAVES: usize = 8;
+// more than 8 causes memory allocation error
+// pub const NR_LEAVES: usize = 9;
 
 pub const NOOP_PROGRAM_ID: Pubkey = pubkey!("noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV");
 
@@ -33,9 +34,11 @@ pub mod without_account {
 
         let mut changelogs_bytes = changelogs.try_to_vec()?;
 
-        for _ in 0..NR_LEAVES {
+        for i in 0..NR_LEAVES {
             // Fake Merkle path.
-            changelogs_bytes.extend_from_slice(&[6u8; 32 * HEIGHT]);
+            // 32 (root) + 32 * HEIGHT (Merkle path) + 8 (index)
+            changelogs_bytes.extend_from_slice(&[6u8; 32 + 32 * HEIGHT + 8]);
+            msg!("{i}: changelog_bytes size: {}", changelogs_bytes.len());
         }
 
         emit_indexer_event(
