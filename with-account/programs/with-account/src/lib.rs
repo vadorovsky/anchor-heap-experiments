@@ -122,13 +122,9 @@ pub enum MyErrorCode {
 
 #[account(zero_copy)]
 pub struct Buffers {
-    /// Buffer used by rkyv for changelog paths.
-    // pub paths_buffer: [u8; (mem::size_of::<PathNode>() * HEIGHT * NR_LEAVES)
-    //     + mem::size_of::<ChangelogEventV1>() * NR_LEAVES * mem::size_of::<Changelogs>()],
+    /// Buffer used for changelog paths.
     pub paths_buffer: [[u8; mem::size_of::<PathNode>() * HEIGHT]; NR_LEAVES_BATCH],
     /// Buffer used by borsh to serialize the final event.
-    // pub serialization_buffer: [u8; (mem::size_of::<PathNode>() * HEIGHT * NR_LEAVES)
-    //     + mem::size_of::<ChangelogEventV1>() * NR_LEAVES * mem::size_of::<Changelogs>()],
     pub serialization_buffer: [u8; 10240],
 }
 
@@ -176,11 +172,3 @@ pub struct ChangelogEventV1 {
     /// Changelog event index.
     pub index: u32,
 }
-
-// /// Version 1 of the [`ChangelogEvent`](light_merkle_tree_program::state::ChangelogEvent).
-// #[derive(AnchorDeserialize, AnchorSerialize, Debug)]
-// pub struct ChangelogEventV1 {
-//     pub meta: ChangelogEventMeta,
-//     // Merkle paths.
-//     pub paths: Vec<Vec<PathNode>>,
-// }
