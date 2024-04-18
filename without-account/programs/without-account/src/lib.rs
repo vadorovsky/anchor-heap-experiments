@@ -21,7 +21,7 @@ pub mod without_account {
         for i in 0..3 {
             #[cfg(target_os = "solana")]
             let pos = GLOBAL_ALLOCATOR.get_heap_pos();
-            test_event_emmitance(&ctx);
+            test_event_emmitance(&ctx)?;
             #[cfg(target_os = "solana")]
             GLOBAL_ALLOCATOR.free_heap(pos);
         }
