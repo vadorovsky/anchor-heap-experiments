@@ -7,9 +7,10 @@ use light_macros::pubkey;
 declare_id!("EnusnErAr7SfFWTJvUXMNdXcXaXkWnpN6p217YZ5T8ou");
 
 pub const HEIGHT: usize = 26;
+/// Number of leaves per batch. More than 10 doesn't fit in the log_wrapper
+/// instruction.
 pub const NR_LEAVES: usize = 10;
-// more than 8 causes memory allocation error
-// pub const NR_LEAVES: usize = 9;
+pub const NR_BATCHES: usize = 63;
 
 pub const NOOP_PROGRAM_ID: Pubkey = pubkey!("noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV");
 
@@ -18,26 +19,37 @@ pub mod without_account {
     use super::*;
 
     pub fn append_leaves(ctx: Context<AppendLeaves>) -> Result<()> {
-        for i in 0..3 {
+        for i in 0..NR_BATCHES {
             #[cfg(target_os = "solana")]
             let pos = GLOBAL_ALLOCATOR.get_heap_pos();
             test_event_emmitance(&ctx)?;
             #[cfg(target_os = "solana")]
             GLOBAL_ALLOCATOR.free_heap(pos);
+            msg!("inserted batch {}", i);
         }
         Ok(())
     }
 }
 
 pub fn test_event_emmitance(ctx: &Context<AppendLeaves>) -> Result<()> {
+    // let mut paths_buffer: Vec<Vec<PathNode>>
     let mut changelog_events = Vec::new();
+
     for i in 0..NR_LEAVES {
-        let changelog_event = ChangelogEvent {
+        let mut paths = Vec::with_capacity(1);
+        let mut path = Vec::with_capacity(1);
+        path.push(PathNode {
+            node: [11u8; 32],
+            index: i as u32,
+        });
+        paths.push(path);
+        let changelog_event = ChangelogEventV1 {
             id: [5u8; 32],
+            paths,
             seq: i as u64,
             index: i as u32,
         };
-        changelog_events.push(changelog_event);
+        changelog_events.push(ChangelogEvent::V1(changelog_event));
         #[cfg(target_os = "solana")]
         GLOBAL_ALLOCATOR.log_total_heap(format!("{}: appending changelog event", i).as_str());
     }
@@ -47,39 +59,20 @@ pub fn test_event_emmitance(ctx: &Context<AppendLeaves>) -> Result<()> {
     #[cfg(target_os = "solana")]
     GLOBAL_ALLOCATOR.log_total_heap("before changelogs_bytes");
 
-    let mut changelogs_bytes = vec![6u8; 10240];
-    let vec_changelogs = changelogs.try_to_vec()?;
+    // let mut changelogs_bytes = vec![6u8; 10240];
+    // .serialize()
+    let changelog_bytes = changelogs.try_to_vec()?;
     #[cfg(target_os = "solana")]
     GLOBAL_ALLOCATOR.log_total_heap("after emit_indexer_event");
-    let mut counter = 0;
-    changelogs_bytes[0..vec_changelogs.len()].copy_from_slice(&vec_changelogs);
-    counter += vec_changelogs.len();
-    extend(&mut changelogs_bytes, &mut counter);
-    msg!("counter: {}", counter);
-    // extend(&mut changelogs_bytes, &mut counter);
     sol_log_compute_units();
+
     emit_indexer_event(
-        changelogs_bytes,
+        changelog_bytes,
         &ctx.accounts.log_wrapper,
         &ctx.accounts.user,
     )?;
     sol_log_compute_units();
     Ok(())
-}
-
-const PATH: [u8; 872] = [6u8; 32 + 32 * HEIGHT + 8];
-
-#[inline(never)]
-pub fn extend(data: &mut Vec<u8>, counter: &mut usize) {
-    // data.extend_from_slice(&[6u8; 32 + 32 * HEIGHT + 8]);
-    for i in 0..NR_LEAVES {
-        // Fake Merkle path.
-        // 32 (root) + 32 * HEIGHT (Merkle path) + 8 (index)
-        data[*counter..*counter + 872].copy_from_slice(&PATH);
-        *counter = *counter + 872usize;
-        #[cfg(target_os = "solana")]
-        GLOBAL_ALLOCATOR.log_total_heap(format!("{}: before bytes.extend_f", i).as_str());
-    }
 }
 
 #[inline(never)]
@@ -117,15 +110,29 @@ pub struct AppendLeaves<'info> {
     pub log_wrapper: UncheckedAccount<'info>,
 }
 
+#[derive(AnchorDeserialize, AnchorSerialize, Debug)]
+#[repr(C)]
+pub enum ChangelogEvent {
+    V1(ChangelogEventV1),
+}
+
 #[derive(AnchorDeserialize, AnchorSerialize)]
 pub struct Changelogs {
     pub changelogs: Vec<ChangelogEvent>,
 }
 
-#[derive(AnchorDeserialize, AnchorSerialize)]
-pub struct ChangelogEvent {
+#[derive(AnchorDeserialize, AnchorSerialize, Debug, Eq, PartialEq)]
+pub struct PathNode {
+    pub node: [u8; 32],
+    pub index: u32,
+}
+
+#[derive(AnchorDeserialize, AnchorSerialize, Debug)]
+pub struct ChangelogEventV1 {
     /// Public key of the tree.
     pub id: [u8; 32],
+    /// Merkle paths.
+    pub paths: Vec<Vec<PathNode>>,
     /// Number of successful operations on the on-chain tree.
     pub seq: u64,
     /// Changelog event index.

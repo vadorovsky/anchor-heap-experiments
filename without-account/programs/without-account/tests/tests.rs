@@ -8,6 +8,7 @@ async fn test_append_leaves() {
     let mut program_test = ProgramTest::default();
     program_test.add_program("without_account", ID, None);
     program_test.add_program("spl_noop", NOOP_PROGRAM_ID, None);
+    program_test.set_compute_max_units(1_400_000u64);
 
     let mut context = program_test.start_with_context().await;
 
